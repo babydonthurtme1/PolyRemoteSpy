@@ -224,21 +224,6 @@ local BtnC2S = mkBtn(Toolbar, "C -> S",      156, 3, 60, 18, TBH, C.filtOff, 8)
 mkLabel(Toolbar, "[Insert] toggle", CFG.WIN_W-120, 3, 114, 18, TBH,
         C.txtDim, 8, TextJustify.Right, TextVerticalAlign.Middle)
 
--- DRAG ZONE: a full-width transparent overlay covering the empty centre of
--- BOTH title bar and toolbar. Buttons sit above it in z-order and consume
--- their own clicks, so only truly empty space triggers drag.
--- Height = TITLE_H + TOOLBAR_H = 54px total.
-local DRAG_TOTAL_H = CFG.TITLE_H + CFG.TOOLBAR_H  -- 54
-local DragOverlay = Instance.New("UIView", Win)
-DragOverlay.PivotPoint       = V(0,0)
-DragOverlay.PositionRelative = V(0,0)
-DragOverlay.PositionOffset   = V(0, yup(WH, 0, DRAG_TOTAL_H))  -- visual top of window
-DragOverlay.SizeRelative     = V(0,0)
-DragOverlay.SizeOffset       = V(CFG.WIN_W, DRAG_TOTAL_H)
-DragOverlay.Color            = C.none   -- fully transparent
-DragOverlay.BorderWidth      = 0
-DragOverlay.ClipDescendants  = false
-
 -- ────────────────────────────────────────────────────────────
 --  PANEL DIVIDER
 -- ────────────────────────────────────────────────────────────
@@ -837,23 +822,31 @@ local isDragging      = false
 local dragStartMouse  = V(0,0)
 local dragStartOffset = V(0,0)
 
--- DragOverlay covers the full 54px title+toolbar zone.
--- Buttons above it consume their own clicks so only empty space drags.
-DragOverlay.MouseDown:Connect(function()
+-- Drag is wired directly on TitleBar and Toolbar so no invisible overlay
+-- is needed. Both UIViews together give a 54px draggable zone.
+-- Buttons are children and consume their own clicks first, so dragging
+-- only activates on the empty background areas of both bars.
+
+local function startDrag()
     isDragging      = true
     dragStartMouse  = Input.MousePosition
     dragStartOffset = Win.PositionOffset
     TitleBar.Color  = C.titleDragging
     DragHint.Text   = "  MOVING"
     DragHint.TextColor = C.txtDragAct
-end)
+end
 
-DragOverlay.MouseUp:Connect(function()
+local function stopDrag()
     isDragging     = false
     TitleBar.Color = C.titleBg
     DragHint.Text  = ":: drag ::"
     DragHint.TextColor = C.txtDragIdle
-end)
+end
+
+TitleBar.MouseDown:Connect(startDrag)
+TitleBar.MouseUp:Connect(stopDrag)
+Toolbar.MouseDown:Connect(startDrag)
+Toolbar.MouseUp:Connect(stopDrag)
 
 -- ============================================================
 --  DETAIL PANE
