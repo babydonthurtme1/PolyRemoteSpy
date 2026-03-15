@@ -1,4 +1,4 @@
-# PolyRemoteSpy v7.1
+# PolyRemoteSpy
 
 A runtime network introspection LocalScript for Polytoria. Captures every
 NetworkEvent, Signal, and chat message the client can see, shows them in a
