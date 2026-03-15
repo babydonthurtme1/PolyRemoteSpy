@@ -502,56 +502,47 @@ local function probeMsg(msg)
     for _, k in ipairs(PROBE_KEYS) do
         local ok, v
 
-        -- String (empty string = key absent)
+        -- Each type is tried in order; once a match is found the rest are skipped.
+        -- No goto — fully Lua 5.1 / loadstring compatible.
         ok,v = pcall(function() return msg:GetString(k) end)
         if ok and type(v)=="string" and v~="" then
-            out[k]={t="string", v='"'..v..'"'}; goto cont
+            out[k] = {t="string", v='"'..v..'"'}
+        else
+            ok,v = pcall(function() return msg:GetInt(k) end)
+            if ok and type(v)=="number" and v~=0 then
+                out[k] = {t="int", v=tostring(math.floor(v))}
+            else
+                ok,v = pcall(function() return msg:GetNumber(k) end)
+                if ok and type(v)=="number" and v~=0 then
+                    out[k] = {t="float", v=string.format("%.4g",v)}
+                else
+                    ok,v = pcall(function() return msg:GetBool(k) end)
+                    if ok and v==true then
+                        out[k] = {t="bool", v="true"}
+                    else
+                        ok,v = pcall(function() return msg:GetVector3(k) end)
+                        if ok and v then
+                            out[k] = {t="V3", v=string.format("(%.3f, %.3f, %.3f)",v.x,v.y,v.z)}
+                        else
+                            ok,v = pcall(function() return msg:GetVector2(k) end)
+                            if ok and v then
+                                out[k] = {t="V2", v=string.format("(%.3f, %.3f)",v.x,v.y)}
+                            else
+                                ok,v = pcall(function() return msg:GetColor(k) end)
+                                if ok and v then
+                                    out[k] = {t="Color", v=string.format("(%.2f, %.2f, %.2f, %.2f)",v.r,v.g,v.b,v.a)}
+                                else
+                                    ok,v = pcall(function() return msg:GetInstance(k) end)
+                                    if ok and v then
+                                        out[k] = {t="Inst", v=v.ClassName..'("'..v.Name..'")'}
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end
-
-        -- Int (0 = likely absent; genuine 0 values will be missed — unavoidable)
-        ok,v = pcall(function() return msg:GetInt(k) end)
-        if ok and type(v)=="number" and v~=0 then
-            out[k]={t="int", v=tostring(math.floor(v))}; goto cont
-        end
-
-        -- Float (same caveat as int)
-        ok,v = pcall(function() return msg:GetNumber(k) end)
-        if ok and type(v)=="number" and v~=0 then
-            out[k]={t="float", v=string.format("%.4g",v)}; goto cont
-        end
-
-        -- Bool: only record true values — GetBool may return false for
-        -- non-existent keys, so we skip false to avoid false positives.
-        ok,v = pcall(function() return msg:GetBool(k) end)
-        if ok and v==true then
-            out[k]={t="bool", v="true"}; goto cont
-        end
-
-        -- Vector3
-        ok,v = pcall(function() return msg:GetVector3(k) end)
-        if ok and v then
-            out[k]={t="V3", v=string.format("(%.3f, %.3f, %.3f)",v.x,v.y,v.z)}; goto cont
-        end
-
-        -- Vector2
-        ok,v = pcall(function() return msg:GetVector2(k) end)
-        if ok and v then
-            out[k]={t="V2", v=string.format("(%.3f, %.3f)",v.x,v.y)}; goto cont
-        end
-
-        -- Color
-        ok,v = pcall(function() return msg:GetColor(k) end)
-        if ok and v then
-            out[k]={t="Color", v=string.format("(%.2f, %.2f, %.2f, %.2f)",v.r,v.g,v.b,v.a)}; goto cont
-        end
-
-        -- Instance
-        ok,v = pcall(function() return msg:GetInstance(k) end)
-        if ok and v then
-            out[k]={t="Inst", v=v.ClassName..'("'..v.Name..'")'}; goto cont
-        end
-
-        ::cont::
     end
     return out
 end
