@@ -1,8 +1,8 @@
-# PolyRemoteSpy
+# PolyRemoteSpy v7.1
 
 A runtime network introspection LocalScript for Polytoria. Captures every
 NetworkEvent, Signal, and chat message the client can see, shows them in a
-two-panel GUI, and generates ready-to-run replay scripts.
+two-panel window, and generates ready-to-run replay scripts.
 
 ---
 
@@ -19,6 +19,47 @@ two-panel GUI, and generates ready-to-run replay scripts.
 
 ---
 
+## Controls
+
+The window has two panels: a scrollable event list on the left and a detail
+inspector on the right.
+
+**Title bar / toolbar** — Click and drag anywhere on the title bar or the
+filter toolbar (the full 54px combined height) to move the window. The area
+labelled `:: drag ::` is the clearest drag zone, but the whole top bar works.
+Press `[Insert]` to toggle visibility.
+
+**`|| PAUSE` / `> RESUME`** — Freezes the list in place so you can click rows.
+New events keep being captured in the background; a `+N new` counter appears.
+Click again or press `>> Latest` to resume and jump to the newest event.
+
+**`CLR`** — Clears all captured events from memory.
+
+**`X`** — Hides the window (same as Insert).
+
+**Filter buttons** — `ALL EVENTS`, `S -> C`, `C -> S` filter the list without
+losing captured data. Chat entries only appear in ALL.
+
+**List rows** — Click any row to load it into the detail panel. Single-click
+`^` or `v` to scroll 3 rows; hold either button for continuous smooth scroll.
+`>> Latest` jumps to the bottom and unpauses.
+
+**Fields panel** — Read-only display of all detected NetMessage keys and their
+values with types.
+
+**Replay Script panel** — Read-only display of a ready-to-run Lua script.
+Click **Copy Script** then press `Ctrl+A` followed by `Ctrl+C` to copy it.
+
+**polyhack-only buttons** (only shown inside the polyhack executor):
+
+| Button | Action |
+|---|---|
+| `Execute` | Runs the replay script immediately via `loadstring()` |
+| `FireClick` | Calls `fireclickdetector()` on the Instance in the event's fields |
+| `SendChat` | Posts `[Spy] direction eventName t=Xs` to game chat |
+
+---
+
 ## What gets captured
 
 ### NetworkEvent  (primary capture target)
@@ -28,36 +69,31 @@ objects. Each carries a `NetMessage` with typed key-value fields.
 
 | Direction | How it works | Label |
 |---|---|---|
-| Server -> Client | Server calls `InvokeClients(msg)` or `InvokeClient(msg, player)`. The `InvokedClient` event fires on the LocalScript. | **S->C** (green) |
+| Server -> Client | Server calls `InvokeClients(msg)` or `InvokeClient(msg, player)`. `InvokedClient` fires on the LocalScript. | **S->C** (green) |
 | Client -> Server | Local player calls `netEvent:InvokeServer(msg)`. Captured via a metatable wrap on `InvokeServer`. | **C->S** (orange) |
 
 **Important limitations:**
-- `C->S` only captures **your own** outbound calls. Other players' `InvokeServer`
-  calls happen server-side and are invisible to a LocalScript.
-- `InvokeClients` and `InvokeClient` cannot be captured at the source (they are
-  server-exclusive methods). We only see their arrival as `InvokedClient`.
-- The metatable hook for `C->S` is a best-effort approach. It may silently fail
-  if the Polytoria sandbox restricts metatable access, in which case only `S->C`
-  events will be captured for that NetworkEvent.
+- `C->S` only captures **your own** outbound calls. Other players' calls
+  happen server-side and are invisible to a LocalScript.
+- The metatable hook for `C->S` may silently fail if the sandbox restricts
+  metatable access, in which case only `S->C` events will be captured.
 
 ### Signal
 
-`Signal` objects (class `Signal`) carry variadic arguments rather than a
-`NetMessage`. They are hooked in the same way:
+`Signal` objects carry variadic arguments rather than a `NetMessage`. Hooked
+via the same approach as NetworkEvent.
 
 | Direction | Label |
 |---|---|
 | `Signal.Invoked` fires on client | **S->C** |
 | Local script calls `signal:Invoke(...)` | **C->S** |
 
-Because Signal arguments have no defined schema, fields are logged as
-`arg1`, `arg2`, etc. with their Lua type and `tostring()` value.
+Arguments are logged as `arg1`, `arg2`, etc. with their Lua type.
 
 ### Chat
 
-Every `Player.Chatted` event that fires on the client is captured. This
-includes messages from all players in the server (chat is replicated to all
-clients).
+Every `Player.Chatted` event visible to the client is captured, including all
+players currently in the server.
 
 | What | Label |
 |---|---|
@@ -67,46 +103,49 @@ clients).
 
 ## Scan coverage
 
-On startup and whenever new children are added, PolyRemoteSpy scans:
+On startup PolyRemoteSpy scans all descendants of:
 
-- `game["Environment"]` and all descendants
-- `game["ScriptService"]` and all descendants
-- `game["PlayerGUI"]` and all descendants
-- `ChildAdded` watchers on all three roots catch objects created after startup
+- `game["Environment"]`
+- `game["ScriptService"]`
+- `game["PlayerGUI"]`
 
-Any `NetworkEvent` or `Signal` found anywhere in these trees is hooked
-automatically. If a game stores its events in a custom container outside
-these three roots, it will not be scanned. You can add extra roots by
-appending to `scanRoots` near the bottom of the script.
+`ChildAdded` watchers on each root automatically hook objects created later.
+To scan a custom container, append it to `scanRoots` near the bottom of the
+script:
+
+```lua
+local scanRoots = { Env }
+pcall(function() table.insert(scanRoots, game["ScriptService"]) end)
+pcall(function() table.insert(scanRoots, game["Hidden"]) end)  -- add custom root
+```
 
 ---
 
 ## NetMessage field probing
 
-NetMessage has no key-enumeration API — you cannot ask "what keys does this
-message contain?" The spy must probe every key name it wants to find.
+NetMessage has no key-enumeration API — the spy must probe every key name it
+wants to find. PolyRemoteSpy probes **536 key names** covering all common
+patterns across Polytoria game genres. All single-letter keys (a–z) are
+included, as are genre-specific names for tycoon, RPG, shooter, simulator,
+and social games.
 
-PolyRemoteSpy probes **300+ key names** covering the most common patterns
-across all Polytoria game genres: tycoon games, RPGs, shooters, simulators,
-social games, and more. All single-letter keys (a–z) are included.
+### Detection limits
 
-### Probe detection limits
-
-| Value | Detected? | Why |
+| Value type | Detected | Reason |
 |---|---|---|
-| Any non-empty string | Yes | `GetString` returns `""` for missing keys |
-| Any non-zero int | Yes | `GetInt` returns `0` for missing keys |
-| Any non-zero float | Yes | `GetNumber` returns `0` for missing keys |
-| `true` boolean | Yes | Unambiguous |
-| `false` boolean | No | `GetBool` returns `false` for missing keys — indistinguishable |
-| Int/float with value `0` | No | Same as missing key — indistinguishable |
-| String with value `""` | No | Same as missing key |
-| Vector3, Vector2, Color, Instance | Yes | Returns `nil` for missing keys |
+| Non-empty string | Yes | `GetString` returns `""` for absent keys |
+| Non-zero int | Yes | `GetInt` returns `0` for absent keys |
+| Non-zero float | Yes | `GetNumber` returns `0` for absent keys |
+| Boolean `true` | Yes | Unambiguous |
+| Boolean `false` | **No** | Indistinguishable from absent key |
+| Int / float `0` | **No** | Indistinguishable from absent key |
+| Empty string `""` | **No** | Indistinguishable from absent key |
+| Vector3, Vector2, Color, Instance | Yes | Returns `nil` for absent keys |
 
-### Adding custom key names
+### Fields show "(no keys found from probe list)"
 
-If a game uses key names not in the probe list, add them near the top of
-the script:
+The event fired — it just uses key names not in the 536-entry probe list.
+Add the missing names to `EXTRA_KEYS` near the top of the script:
 
 ```lua
 local EXTRA_KEYS = {
@@ -114,101 +153,57 @@ local EXTRA_KEYS = {
 }
 ```
 
-To find what keys a game uses: pause the spy, inspect a captured event, and
-look for patterns in nearby game scripts or the console output.
-
-### Why fields show "(no keys found from probe list)"
-
-The captured message exists — the event fired. The game just uses key names
-not in the 300+ probe list. Use `EXTRA_KEYS` to add them once you identify
-the names by reading the game's LocalScripts or observing multiple events.
-
----
-
-## GUI reference
-
-```
-+--[PolyRemoteSpy]--[0 hooks]--[0 captured]--[ drag ]--[|| PAUSE][CLR][X]--+
-| [ALL EVENTS] [S -> C] [C -> S]                         [Insert] toggle    |
-+---[list]---+--------------------------------------------------------------+
-| S->C  Ev   | S->C  EventName                               t=12.34s       |
-| C->S  Ev   | game["ScriptService"]["Events"]["EventName"]                  |
-| CHAT  Name | FIELDS                                                        |
-| ...        |   [string]  key  =  "value"                                   |
-|            |   [V3]  position  =  (1.00,2.00,3.00)                        |
-|            | REPLAY SCRIPT  --  click inside, Ctrl+A, Ctrl+C              |
-|            |   -- PolyRemoteSpy [S->C]                                     |
-|            |   local netEvent = game["ScriptService"]["Events"]["Ev"]     |
-|            |   local msg = NetMessage.New()                                |
-|            |   msg:AddString("key", "value")                               |
-|            |   -- S->C: use InvokeClient from a server Script to replay   |
-+--[^][v][>> Latest][+N new]--+--[Copy Script][Execute][FireClick][SendChat]+
-```
-
-### Title bar
-
-| Control | Action |
-|---|---|
-| `[ drag ]` strip | Click and drag to move the window |
-| `[Insert]` key | Toggle window visibility |
-| `|| PAUSE` / `> RESUME` | Freeze the list so you can click rows. New events accumulate and show a `+N new` counter. |
-| `CLR` | Clear all captured events |
-| `X` | Hide the window (same as Insert) |
-
-### Filter bar
-
-| Button | Shows |
-|---|---|
-| `ALL EVENTS` | Every captured event |
-| `S -> C` | Server-to-client NetworkEvent/Signal traffic only |
-| `C -> S` | Client-to-server traffic only |
-
-Chat events are always visible in ALL and are hidden by S->C / C->S filters.
-
-### List panel (left)
-
-Rows are colour-coded by direction. Click any row to inspect it in the
-detail panel. The list auto-scrolls to newest events when not paused.
-Use `^` / `v` (hold for smooth scroll) or `>> Latest` to navigate.
-
-### Detail panel (right)
-
-Displays the selected event's full instance path, all probed NetMessage
-fields with types and values, and a generated replay script.
-
-**Copy Script** — focuses the script text box. Press `Ctrl+A` then `Ctrl+C`
-to copy the full replay script to your clipboard.
-
-### polyhack-only buttons
-
-These buttons only appear when running inside the polyhack executor.
-
-| Button | Function |
-|---|---|
-| `Execute` | Runs the replay script immediately via `loadstring()` |
-| `FireClick` | Calls `fireclickdetector()` on the Instance in the event's fields (or the event's parent if no Instance field is found) |
-| `SendChat` | Posts `[Spy] direction eventName t=Xs` to game chat via `sendchat()` |
-
 ---
 
 ## Replay script format
 
-For a `S->C` event the script reminds you that replaying requires calling
-`InvokeClient` from a server Script (you cannot call it from a LocalScript).
+Every captured event generates a complete, ready-to-run Lua script. The
+script includes a header with the event name, direction, full path, and
+capture timestamp, followed by all detected field writes and the correct
+invoke call.
 
-For a `C->S` event the script is immediately executable:
+Example C->S (immediately runnable):
 
 ```lua
--- PolyRemoteSpy [C->S]
+-- PolyRemoteSpy  capture
+-- Event      : BuyEvent
+-- Direction  : C->S
+-- Path       : game["Environment"]["Tycoon 1"]["BuyEvent"]
+-- Captured   : t=42.18s
+--
+-- HOW TO REPLAY: run this in a LocalScript or via Execute button.
+
 local netEvent = game["Environment"]["Tycoon 1"]["BuyEvent"]
 local msg = NetMessage.New()
+
 msg:AddString("type", "buy")
 msg:AddInt("itemId", 5)
+msg:AddVector3("position", Vector3.New(10.00, 0.50, -3.20))
+
 netEvent:InvokeServer(msg)
 ```
 
-Paste this into a LocalScript or (if you have polyhack) use the Execute
-button to fire it directly.
+Example S->C (requires a server Script to replay):
+
+```lua
+-- HOW TO REPLAY: paste this into a SERVER Script (ScriptInstance).
+
+local netEvent = game["ScriptService"]["Events"]["PlaySound"]
+local msg = NetMessage.New()
+
+msg:AddString("name", "ChaChing")
+-- [Instance] "source" was: Part("Process")
+-- msg:AddInstance("source", game["Environment"]:FindChild("..."))  -- resolve manually
+
+-- From a server Script:
+-- netEvent:InvokeClients(msg)                          -- all players
+-- netEvent:InvokeClient(msg, game["Players"]["name"])  -- one player
+```
+
+All 8 NetMessage types are fully generated: `string`, `int`, `float`, `bool`,
+`Vector3`, `Vector2`, `Color`. Instance fields are included as comments with
+the captured class name and instance name, since instances cannot be
+serialised to Lua source.
 
 ---
 
@@ -216,17 +211,16 @@ button to fire it directly.
 
 | Limitation | Reason |
 |---|---|
-| `C->S` may not capture in all games | Requires metatable access to `NetworkEvent.__index`, which some sandbox configs block |
-| Other players' `C->S` calls invisible | `InvokeServer` only fires server-side; LocalScript cannot observe it |
-| Unrecognised NetMessage keys missing | No key enumeration API; only probe-list keys are shown |
-| Signal args shown as `arg1`/`arg2` | Signal carries variadic Lua values with no schema |
-| Events outside the three scan roots missed | Only `Environment`, `ScriptService`, `PlayerGUI` are scanned |
+| `C->S` may not capture in all games | Requires metatable access to `NetworkEvent.__index` |
+| Other players' `C->S` calls invisible | `InvokeServer` is server-side; LocalScript cannot see it |
+| Keys with value `0`, `""`, or `false` not shown | Indistinguishable from absent keys in the probe API |
+| Unknown key names not shown | Add them to `EXTRA_KEYS` |
+| Signal args shown as `arg1`/`arg2` | Signal carries variadic values with no schema |
+| Events outside the three scan roots missed | Append extra roots to `scanRoots` |
 
 ---
 
 ## Configuration
-
-At the top of the script, the `CFG` table controls behaviour:
 
 ```lua
 local CFG = {
@@ -234,28 +228,18 @@ local CFG = {
     MAX_LOGS     = 300,       -- maximum events kept in memory
     WIN_W        = 880,       -- window width in pixels
     WIN_H        = 490,       -- window height in pixels
-    REFRESH_RATE = 0.30,      -- seconds between live list updates
-    ...
+    REFRESH_RATE = 0.30,      -- seconds between live list refreshes
 }
-```
-
-To scan additional roots, append to `scanRoots` near the end of the script:
-
-```lua
-local scanRoots = { Env }
-pcall(function() table.insert(scanRoots, game["ScriptService"]) end)
-pcall(function() table.insert(scanRoots, game["Hidden"]) end)  -- custom root
 ```
 
 ---
 
 ## Polyhack executor functions used
 
-| Function | Used for |
+| Function | Where used |
 |---|---|
-| `identifyexecutor()` | Detect polyhack, show badge, enable extra buttons |
-| `loadstring(src)` | Execute replay scripts via the Execute button |
+| `identifyexecutor()` | Startup detection, badge, extra buttons |
+| `loadstring(src)` | Execute button — runs replay scripts live |
 | `fireclickdetector(inst)` | FireClick button |
 | `sendchat(msg)` | SendChat button |
-| `equiptool` / `activatetool` / `unequiptool` | Available in generated replay scripts |
-| `serverequiptool` | Available in generated replay scripts |
+| `equiptool` / `activatetool` / `unequiptool` / `serverequiptool` | Available inside generated replay scripts |
